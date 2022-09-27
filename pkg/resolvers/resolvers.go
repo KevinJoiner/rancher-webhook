@@ -56,3 +56,62 @@ func visitRules(source fmt.Stringer, rules []rbacv1.PolicyRule, err error, visit
 	}
 	return true
 }
+
+type ruleAccumulator2 struct {
+	rules  map[string]rbacv1.PolicyRule
+	errors map[string]error
+	check  bool
+}
+
+func (r *ruleAccumulator2) visit(source fmt.Stringer, rule *rbacv1.PolicyRule, err error) bool {
+	if r.rules == nil {
+		r.rules = map[string]rbacv1.PolicyRule{}
+		r.errors = map[string]error{}
+	}
+	if r.check {
+		rStr := rule.String()
+		if _, present := r.rules[rStr]; !present {
+			r.rules[rStr] = *rule
+		}
+		if err != nil {
+			eStr := err.Error()
+			if _, present := r.errors[eStr]; !present {
+				r.errors[eStr] = err
+			}
+		}
+	} else {
+		rStr := rule.String()
+		r.rules[rStr] = *rule
+		if err != nil {
+			eStr := err.Error()
+			r.errors[eStr] = err
+		}
+	}
+	return true
+}
+
+// getError will combine all of the recorded errors into a single error.
+func (r *ruleAccumulator2) getRules() []rbacv1.PolicyRule {
+	if len(r.rules) == 0 {
+		return nil
+	}
+
+	retRules := make([]rbacv1.PolicyRule, 0, len(r.rules))
+	for _, rule := range r.rules {
+		retRules = append(retRules, rule)
+	}
+	return retRules
+}
+
+// getError will combine all of the recorded errors into a single error.
+func (r *ruleAccumulator2) getError() error {
+	if len(r.errors) == 0 {
+		return nil
+	}
+	var errorStr string
+	for _, err := range r.errors {
+		errorStr += fmt.Sprintf(", %s", err.Error())
+	}
+	const leadingChars = 2
+	return fmt.Errorf("[%s]", errorStr[leadingChars:])
+}

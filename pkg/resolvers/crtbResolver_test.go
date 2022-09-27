@@ -1,6 +1,7 @@
 package resolvers_test
 
 import (
+	"strconv"
 	"testing"
 
 	"github.com/golang/mock/gomock"
@@ -124,7 +125,8 @@ func (c *CRTBResolverSuite) SetupSuite() {
 }
 
 func (c *CRTBResolverSuite) TestCRTBRuleResolver() {
-	resolver := c.NewTestCRTBResolver()
+	ctrl := gomock.NewController(c.T())
+	resolver := c.NewTestCRTBResolver(ctrl)
 	tests := []struct {
 		name      string
 		user      user.Info
@@ -188,8 +190,7 @@ func (c *CRTBResolverSuite) TestCRTBRuleResolver() {
 		})
 	}
 }
-func (c *CRTBResolverSuite) NewTestCRTBResolver() *resolvers.CRTBRuleResolver {
-	ctrl := gomock.NewController(c.T())
+func (c *CRTBResolverSuite) NewTestCRTBResolver(ctrl *gomock.Controller) *resolvers.CRTBRuleResolver {
 	bindings := []*apisv3.ClusterRoleTemplateBinding{c.user1AdminCRTB, c.user1AReadNS2CRTB, c.user1InvalidNS2CRTB, c.user2WriteCRTB, c.user2ReadCRTB}
 	crtbCache := NewCRTBCache(ctrl, bindings)
 	clusterRoleCache := fakes.NewMockClusterRoleCache(ctrl)
@@ -225,4 +226,84 @@ func NewCRTBCache(ctrl *gomock.Controller, bindings []*apisv3.ClusterRoleTemplat
 	}).AnyTimes()
 
 	return clusterCache
+}
+
+var result []rbacv1.PolicyRule
+
+func BenchmarkGotRules(b *testing.B) {
+	cSuite := &CRTBResolverSuite{}
+	ctrl := gomock.NewController(b)
+	resolver := setupBench(ctrl, cSuite)
+	var rules []rbacv1.PolicyRule
+	for i := 0; i < b.N; i++ {
+		rules, _ = resolver.RulesFor(NewUserInfo(cSuite.user1AdminCRTB.UserName), cSuite.user1AdminCRTB.Namespace)
+	}
+	result = rules
+}
+
+func BenchmarkGotRulesWithMapCheck(b *testing.B) {
+	cSuite := &CRTBResolverSuite{}
+	ctrl := gomock.NewController(b)
+	resolver := setupBench(ctrl, cSuite)
+	var rules []rbacv1.PolicyRule
+	for i := 0; i < b.N; i++ {
+		rules, _ = resolver.RulesFor2(NewUserInfo(cSuite.user1AdminCRTB.UserName), cSuite.user1AdminCRTB.Namespace)
+	}
+	result = rules
+}
+
+func BenchmarkGotRulesWithMapOverride(b *testing.B) {
+	cSuite := &CRTBResolverSuite{}
+	ctrl := gomock.NewController(b)
+	resolver := setupBench(ctrl, cSuite)
+	var rules []rbacv1.PolicyRule
+	for i := 0; i < b.N; i++ {
+		rules, _ = resolver.RulesFor3(NewUserInfo(cSuite.user1AdminCRTB.UserName), cSuite.user1AdminCRTB.Namespace)
+	}
+	result = rules
+}
+
+func createNestedRoleTemplate(name string, cache *fakes.MockRoleTemplateCache, depth, numOfRules int) *apisv3.RoleTemplate {
+	defaultRules := make([]rbacv1.PolicyRule, 0, numOfRules)
+	for i := 0; i < numOfRules; i++ {
+		defaultRules = append(defaultRules, rbacv1.PolicyRule{
+			Verbs:     []string{"GET", "WATCH"},
+			APIGroups: []string{"v1"},
+			Resources: []string{"services"},
+		})
+	}
+
+	start := createRoleTemplate(name, defaultRules)
+	prior := start
+
+	for i := 0; i < depth; i++ {
+		current := createRoleTemplate("current-"+strconv.Itoa(i), defaultRules)
+		cache.EXPECT().Get(current.Name).Return(current, nil).AnyTimes()
+		priorInherits := []string{current.Name}
+		prior.RoleTemplateNames = priorInherits
+		prior = current
+	}
+
+	return start
+}
+
+func createRoleTemplate(name string, rules []rbacv1.PolicyRule) *apisv3.RoleTemplate {
+	return &apisv3.RoleTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name,
+		},
+		Rules: rules,
+	}
+}
+
+func setupBench(ctrl *gomock.Controller, c *CRTBResolverSuite) *resolvers.CRTBRuleResolver {
+	c.SetupSuite()
+	bindings := []*apisv3.ClusterRoleTemplateBinding{c.user1AdminCRTB}
+	crtbCache := NewCRTBCache(ctrl, bindings)
+	clusterRoleCache := fakes.NewMockClusterRoleCache(ctrl)
+	roleTemplateCache := fakes.NewMockRoleTemplateCache(ctrl)
+	rt := createNestedRoleTemplate(c.adminRT.Name, roleTemplateCache, 10, 100)
+	roleTemplateCache.EXPECT().Get(c.adminRT.Name).Return(rt, nil).AnyTimes()
+	roleResolver := auth.NewRoleTemplateResolver(roleTemplateCache, clusterRoleCache)
+	return resolvers.NewCRTBRuleResolver(crtbCache, roleResolver)
 }

@@ -39,6 +39,17 @@ func (c *CRTBRuleResolver) RulesFor(user user.Info, namespace string) (rules []r
 	return visitor.rules, visitor.getError()
 }
 
+func (c *CRTBRuleResolver) RulesFor2(user user.Info, namespace string) (rules []rbacv1.PolicyRule, retError error) {
+	visitor := &ruleAccumulator2{}
+	c.VisitRulesFor(user, namespace, visitor.visit)
+	return visitor.getRules(), visitor.getError()
+}
+func (c *CRTBRuleResolver) RulesFor3(user user.Info, namespace string) (rules []rbacv1.PolicyRule, retError error) {
+	visitor := &ruleAccumulator2{check: true}
+	c.VisitRulesFor(user, namespace, visitor.visit)
+	return visitor.getRules(), visitor.getError()
+}
+
 // VisitRulesFor invokes visitor() with each rule that applies to a given user in a given namespace, and each error encountered resolving those rules.
 // If visitor() returns false, visiting is short-circuited.
 func (c *CRTBRuleResolver) VisitRulesFor(user user.Info, namespace string, visitor func(source fmt.Stringer, rule *rbacv1.PolicyRule, err error) bool) {
