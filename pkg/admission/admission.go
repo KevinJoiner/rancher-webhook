@@ -127,14 +127,10 @@ func defaultWebhookInfo(handler WebhookHandler, clientConfig v1.WebhookClientCon
 		},
 	}
 	if clientConfig.URL != nil {
-		newURL := Path(*clientConfig.URL, handler)
-		clientConfig.URL = &newURL
+		clientConfig.URL = Ptr(Path(*clientConfig.URL, handler))
 	}
 	if clientConfig.Service != nil && clientConfig.Service.Path != nil {
-		newService := clientConfig.Service.DeepCopy()
-		newPath := Path(*newService.Path, handler)
-		newService.Path = &newPath
-		clientConfig.Service = newService
+		clientConfig.Service.Path = Ptr(Path(*clientConfig.Service.Path, handler))
 	}
 	return webhookInfo{
 		name:         fmt.Sprintf("rancher.cattle.io.%s", SubPath(gvr)),
