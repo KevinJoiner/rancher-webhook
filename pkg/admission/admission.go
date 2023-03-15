@@ -18,6 +18,10 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
+const (
+	bypassServiceAccount = "system:serviceaccount:cattle-system:rancher-webhook"
+)
+
 var (
 	// ErrInvalidRequest error returned when the requested operation with the requested fields are invalid.
 	ErrInvalidRequest = fmt.Errorf("invalid request")
@@ -191,15 +195,23 @@ func NewHandlerFunc(handler WebhookHandler) http.HandlerFunc {
 		if review.Response == nil {
 			review.Response = &admissionv1.AdmissionResponse{}
 		}
+		if bypassValidation(&webReq.AdmissionRequest) {
+			review.Response.Allowed = true
+		}
+		review.Response.UID = review.Request.UID
+
 		logrus.Debugf("admit result: %s %s %s user=%s allowed=%v err=%v", webReq.Operation, webReq.Kind.String(), resourceString(webReq.Namespace, webReq.Name), webReq.UserInfo.Username, review.Response.Allowed, err)
 		if err != nil {
 			sendError(responseWriter, review, err)
 			return
 		}
 
-		review.Response.UID = review.Request.UID
 		writeResponse(responseWriter, review)
 	}
+}
+
+func bypassValidation(request *admissionv1.AdmissionRequest) bool {
+	return request.UserInfo.Username == bypassServiceAccount
 }
 
 // Ptr is a generic function that returns the pointer of a string.
