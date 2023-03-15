@@ -1,16 +1,21 @@
+// Package globalrole handles operation validation for globalroles.
 package globalrole
 
 import (
-	"net/http"
+	"fmt"
 
+	apisv3 "github.com/rancher/rancher/pkg/apis/management.cattle.io/v3"
 	"github.com/rancher/webhook/pkg/admission"
 	"github.com/rancher/webhook/pkg/auth"
 	objectsv3 "github.com/rancher/webhook/pkg/generated/objects/management.cattle.io/v3"
+	"github.com/rancher/webhook/pkg/resources/validation"
 	admissionv1 "k8s.io/api/admission/v1"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/kubernetes/pkg/registry/rbac/validation"
+	"k8s.io/apimachinery/pkg/util/validation/field"
+	authorizationv1 "k8s.io/client-go/kubernetes/typed/authorization/v1"
+	rbacValidation "k8s.io/kubernetes/pkg/registry/rbac/validation"
 	"k8s.io/utils/trace"
 )
 
@@ -20,16 +25,19 @@ var gvr = schema.GroupVersionResource{
 	Resource: "globalroles",
 }
 
-// NewValidator returns a new validator used for validation globalRoles.
-func NewValidator(resolver validation.AuthorizationRuleResolver) *Validator {
+// NewValidator returns a new validator used for the validation of globalRoles.
+func NewValidator(resolver rbacValidation.AuthorizationRuleResolver,
+	sar authorizationv1.SubjectAccessReviewInterface) *Validator {
 	return &Validator{
 		resolver: resolver,
+		sar:      sar,
 	}
 }
 
-// Validator implements admission.ValidatingAdmissionHandler
+// Validator implements admission.ValidatingAdmissionHandler.
 type Validator struct {
-	resolver validation.AuthorizationRuleResolver
+	resolver rbacValidation.AuthorizationRuleResolver
+	sar      authorizationv1.SubjectAccessReviewInterface
 }
 
 // GVR returns the GroupVersionKind for this CRD.
@@ -53,36 +61,65 @@ func (v *Validator) Admit(request *admission.Request) (*admissionv1.AdmissionRes
 	listTrace := trace.New("globalRoleValidator Admit", trace.Field{Key: "user", Value: request.UserInfo.Username})
 	defer listTrace.LogIfLong(admission.SlowTraceDuration)
 
-	newGR, err := objectsv3.GlobalRoleFromRequest(&request.AdmissionRequest)
+	oldGR, newGR, err := objectsv3.GlobalRoleOldAndNewFromRequest(&request.AdmissionRequest)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get GlobalRole from request: %w", err)
 	}
 
-	// object is in the process of being deleted, so admit it
-	// this admits update operations that happen to remove finalizers
-	if newGR.DeletionTimestamp != nil {
-		return &admissionv1.AdmissionResponse{
-			Allowed: true,
-		}, nil
-	}
+	fldPath := field.NewPath("globalrole")
+	var fieldErr *field.Error
 
-	// ensure all PolicyRules have at least one verb, otherwise RBAC controllers may encounter issues when creating Roles and ClusterRoles
-	for _, rule := range newGR.Rules {
-		if len(rule.Verbs) == 0 {
+	switch request.Operation {
+	case admissionv1.Update:
+		if newGR.DeletionTimestamp != nil {
+			// Object is in the process of being deleted, so admit it.
+			// This admits update operations that happen to remove finalizers.
+			// This is needed to supported the deletion of old GlobalRoles that would not pass the update check that verifies all rules have verbs.
 			return &admissionv1.AdmissionResponse{
-				Result: &metav1.Status{
-					Status:  "Failure",
-					Message: "GlobalRole.Rules: PolicyRules must have at least one verb",
-					Reason:  metav1.StatusReasonBadRequest,
-					Code:    http.StatusBadRequest,
-				},
-				Allowed: false,
+				Allowed: true,
 			}, nil
 		}
+		fieldErr = v.validateUpdateFields(oldGR, newGR, fldPath, request)
+	case admissionv1.Create:
+		fieldErr = validateCreateFields(newGR, fldPath)
+	default:
+		return nil, fmt.Errorf("globalRole operation %v: %w", request.Operation, admission.ErrUnsupportedOperation)
+	}
+
+	if fieldErr != nil {
+		return admission.BadRequest(fieldErr.Error()), nil
 	}
 
 	response := &admissionv1.AdmissionResponse{}
 	auth.SetEscalationResponse(response, auth.ConfirmNoEscalation(request, newGR.Rules, "", v.resolver))
 
 	return response, nil
+}
+
+// validUpdateFields checks if the fields being changed are valid update fields.
+func (v *Validator) validateUpdateFields(oldRole, newRole *apisv3.GlobalRole, fldPath *field.Path, request *admission.Request) *field.Error {
+	if fldError := validation.CheckForVerbs(newRole.Rules, fldPath); fldError != nil {
+		return fldError
+	}
+
+	if !oldRole.Builtin {
+		return nil
+	}
+
+	// ignore changes to meta data and newUserDefault
+	oldRole.NewUserDefault = newRole.NewUserDefault
+	oldRole.ObjectMeta = newRole.ObjectMeta
+
+	if !equality.Semantic.DeepEqual(oldRole, newRole) {
+		return field.Forbidden(fldPath, "updates to builtIn GlobalRoles for fields other than 'newUserDefault' are forbidden")
+	}
+	return nil
+}
+
+// validateCreateFields checks if all required fields are present and valid.
+func validateCreateFields(newRole *apisv3.GlobalRole, fldPath *field.Path) *field.Error {
+	if newRole.DisplayName == "" {
+		return field.Required(fldPath.Child("displayName"), "")
+	}
+	return validation.CheckForVerbs(newRole.Rules, fldPath)
 }

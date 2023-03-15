@@ -26,7 +26,7 @@ func Validation(clients *clients.Clients) ([]admission.ValidatingAdmissionHandle
 		&machineconfig.Validator{},
 	}
 	if clients.MultiClusterManagement {
-		globalRoles := globalrole.NewValidator(clients.DefaultResolver)
+		globalRoles := globalrole.NewValidator(clients.DefaultResolver, clients.K8s.AuthorizationV1().SubjectAccessReviews())
 		globalRoleBindings := globalrolebinding.NewValidator(clients.Management.GlobalRole().Cache(), clients.DefaultResolver)
 		prtbs := projectroletemplatebinding.NewValidator(clients.Management.ProjectRoleTemplateBinding().Cache(),
 			clients.Management.ClusterRoleTemplateBinding().Cache(), clients.DefaultResolver, clients.RoleTemplateResolver)

@@ -5,6 +5,7 @@ import (
 
 	"github.com/rancher/webhook/pkg/admission"
 	objectsv1 "github.com/rancher/webhook/pkg/generated/objects/provisioning.cattle.io/v1"
+	"github.com/rancher/webhook/pkg/patch"
 	"github.com/rancher/webhook/pkg/resources/mutation"
 	admissionv1 "k8s.io/api/admission/v1"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
@@ -53,9 +54,13 @@ func (m *Mutator) Admit(request *admission.Request) (*admissionv1.AdmissionRespo
 	if err != nil {
 		return nil, err
 	}
-	response := &admissionv1.AdmissionResponse{}
-	if err := mutation.SetCreatorIDAnnotation(request, response, request.Object, cluster.DeepCopy()); err != nil {
+	if err := mutation.SetCreatorIDAnnotation(request, cluster); err != nil {
 		return nil, fmt.Errorf("failed to set creatorIDAnnotation: %w", err)
+	}
+
+	response := &admissionv1.AdmissionResponse{}
+	if err := patch.CreatePatch(request.Object.Raw, cluster, response); err != nil {
+		return nil, fmt.Errorf("failed to create patch: %w", err)
 	}
 	response.Allowed = true
 	return response, nil

@@ -22,10 +22,22 @@ import (
 const (
 	// CreatorIDAnn is an annotation key for the id of the creator.
 	CreatorIDAnn = "field.cattle.io/creatorId"
+
+	// ForceUpdate is the verb used to determine if a subject can bypass certain validation checks.
+	ForceUpdate = "force-update"
+
+	// Escalate is the verb used to determine if a subject can escalate privileges.
+	Escalate = "escalate"
 )
 
-// EscalationAuthorized checks if the user associated with the context is explicitly authorized to escalate the given GVR.
+// EscalationAuthorized checks if the user associated with the request is explicitly authorized to escalate the given GVR.
 func EscalationAuthorized(request *admission.Request, gvr schema.GroupVersionResource, sar authorizationv1.SubjectAccessReviewInterface, namespace string) (bool, error) {
+	return HasVerb(request, gvr, sar, namespace, Escalate)
+}
+
+// HasVerb checks if the user associated with the request has the given verb for the provided GVR in the provided namespace.
+// This check is performed creating a SubjectAccessReview to Kubernetes.
+func HasVerb(request *admission.Request, gvr schema.GroupVersionResource, sar authorizationv1.SubjectAccessReviewInterface, namespace, verb string) (bool, error) {
 	extras := map[string]v1.ExtraValue{}
 	for k, v := range request.UserInfo.Extra {
 		extras[k] = v1.ExtraValue(v)
@@ -34,7 +46,7 @@ func EscalationAuthorized(request *admission.Request, gvr schema.GroupVersionRes
 	resp, err := sar.Create(request.Context, &v1.SubjectAccessReview{
 		Spec: v1.SubjectAccessReviewSpec{
 			ResourceAttributes: &v1.ResourceAttributes{
-				Verb:      "escalate",
+				Verb:      verb,
 				Namespace: namespace,
 				Version:   gvr.Version,
 				Resource:  gvr.Resource,
@@ -84,7 +96,7 @@ func SetEscalationResponse(response *admissionv1.AdmissionResponse, err error) {
 		return
 	}
 	response.Result = &metav1.Status{
-		Status:  "Failure",
+		Status:  metav1.StatusFailure,
 		Message: err.Error(),
 		Reason:  metav1.StatusReasonInvalid,
 		Code:    http.StatusUnprocessableEntity,

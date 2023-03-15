@@ -14,6 +14,7 @@ import (
 	admissionv1 "k8s.io/api/admission/v1"
 	v1 "k8s.io/api/admissionregistration/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
@@ -205,6 +206,18 @@ func NewHandlerFunc(handler WebhookHandler) http.HandlerFunc {
 func Ptr[T ~string](str T) *T {
 	newStr := str
 	return &newStr
+}
+
+// BadRequest Creates a new AdmissionResponse that denies a request with the BadRequest status and the given optional message.
+func BadRequest(message string) *admissionv1.AdmissionResponse {
+	return &admissionv1.AdmissionResponse{
+		Result: &metav1.Status{
+			Status:  metav1.StatusFailure,
+			Message: message,
+			Reason:  metav1.StatusReasonBadRequest,
+			Code:    http.StatusBadRequest,
+		},
+	}
 }
 
 func sendError(responseWriter http.ResponseWriter, review *admissionv1.AdmissionReview, err error) {

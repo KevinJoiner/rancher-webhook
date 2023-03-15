@@ -4,9 +4,11 @@ import (
 	v3 "github.com/rancher/rancher/pkg/apis/management.cattle.io/v3"
 	rbacv1 "k8s.io/api/rbac/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 func (m *IntegrationSuite) TestRoleTemplate() {
+	const inheritedRTName = "inherited-role-template"
 	newObj := func() *v3.RoleTemplate { return &v3.RoleTemplate{} }
 	validCreateObj := &v3.RoleTemplate{
 		ObjectMeta: v1.ObjectMeta{
@@ -19,7 +21,14 @@ func (m *IntegrationSuite) TestRoleTemplate() {
 				Resources: []string{"pods"},
 			},
 		},
+		RoleTemplateNames: []string{inheritedRTName},
+		DisplayName:       "Role Template",
+		Context:           "cluster",
 	}
+	inheritedRT := validCreateObj.DeepCopy()
+	inheritedRT.Name = inheritedRTName
+	inheritedRT.RoleTemplateNames = nil
+
 	invalidCreate := func() *v3.RoleTemplate {
 		invalidCreate := validCreateObj.DeepCopy()
 		if len(invalidCreate.Rules) != 0 {
@@ -39,6 +48,12 @@ func (m *IntegrationSuite) TestRoleTemplate() {
 		validUpdateObj.Description = "Updated description"
 		return validUpdateObj
 	}
+
+	// delete should be invalid because the validCreateObj inherits it.
+	invalidDelete := func() *v3.RoleTemplate {
+		return inheritedRT
+	}
+
 	validDelete := func() *v3.RoleTemplate {
 		return validCreateObj
 	}
@@ -48,7 +63,10 @@ func (m *IntegrationSuite) TestRoleTemplate() {
 		validCreateObj: validCreateObj,
 		invalidUpdate:  invalidUpdate,
 		validUpdate:    validUpdate,
+		invalidDelete:  invalidDelete,
 		validDelete:    validDelete,
 	}
+	m.createObj(inheritedRT, schema.GroupVersionKind{})
 	validateEndpoints(m.T(), endPoints, m.clientFactory)
+	m.deleteObj(inheritedRT, schema.GroupVersionKind{})
 }

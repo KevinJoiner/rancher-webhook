@@ -88,8 +88,8 @@ For example, there is a
 request to create or update a GlobalRole (a Rancher CRD), the Webhook, being an instance of an
 admission controller, intercepts the request. The Admit method for Global Roles runs.
 It inspects the Global Role object and leads it through a series of custom checks. One of them
-ensures that each rule of the GlobalRole has at least one verb. If it does not, then the Webhook
-changes returns a response value with `Allowed` set to false.
+ensures that each rule of the GlobalRole has at least one verb. If it does not, the Webhook 
+returns a response value with `Allowed` set to false.
 
 ```go
 	for _, rule := range newGR.Rules {
